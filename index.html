@@ -316,27 +316,6 @@ async function deleteAudit(id){
   schedulePush();
 }
 
-async function backupData(){
-  const filename = 'audit-tracker-backup-'+todayISO()+'.json';
-  const blob = new Blob([JSON.stringify(STATE.audits, null, 2)], {type:'application/json'});
-  const file = new File([blob], filename, {type:'application/json'});
-  if(navigator.canShare && navigator.canShare({files:[file]})){
-    try{
-      await navigator.share({files:[file], title:'Audit Tracker backup'});
-      showToast('Backup shared');
-      return;
-    }catch(err){
-      if(err && err.name==='AbortError') return;
-    }
-  }
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url; link.download = filename;
-  document.body.appendChild(link); link.click(); document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-  showToast('Backup downloaded — save it to Drive from your files app');
-}
-
 // --- Google Drive sync ---------------------------------------------------
 // Fill this in once you've created an OAuth client in Google Cloud Console
 // (Settings → Google Drive sync will say "not set up yet" until you do).
@@ -673,15 +652,6 @@ function renderSettings(){
           : `<button id="drive-connect-btn"${driveConfigured()?'':' disabled'}>${svgIcon('cloud-upload')} Connect Google Drive</button>`}
       </div>
     </div>
-    <div class="card">
-      <div class="company" style="font-size:16px;">Backup & transfer</div>
-      <div class="meta" style="margin-top:6px;line-height:1.5;">Audits are always saved on this device first. Backup to Drive hands an extra copy to your phone's share sheet — useful as a one-off, or on a device that isn't signed into Drive sync.</div>
-      <div class="btnrow">
-        <button id="backup-btn">${svgIcon('upload')} Backup to Drive</button>
-        <button id="import-btn">${svgIcon('download')} Import backup</button>
-        <input type="file" id="import-file" accept="application/json" style="display:none;">
-      </div>
-    </div>
   </div>`;
 }
 
@@ -798,7 +768,6 @@ function attachHandlers(){
   }
 
   if(STATE.view==='settings'){
-    document.getElementById('backup-btn').addEventListener('click', backupData);
     const connectBtn = document.getElementById('drive-connect-btn');
     if(connectBtn) connectBtn.addEventListener('click', driveSignIn);
     const disconnectBtn = document.getElementById('drive-disconnect-btn');
@@ -806,17 +775,6 @@ function attachHandlers(){
     const syncNowBtn = document.getElementById('drive-sync-now-btn');
     if(syncNowBtn) syncNowBtn.addEventListener('click', async ()=>{
       await pullFromDrive(); await pushToDrive(); showToast('Synced'); render();
-    });
-    document.getElementById('import-btn').addEventListener('click', ()=>document.getElementById('import-file').click());
-    document.getElementById('import-file').addEventListener('change', async (e)=>{
-      const file = e.target.files[0]; if(!file) return;
-      try{
-        const text = await file.text();
-        const items = JSON.parse(text);
-        if(!Array.isArray(items)) throw new Error('bad format');
-        for(const a of items){ if(a.id) await saveAudit(a); }
-        showToast('Imported '+items.length+' audits'); render();
-      }catch(err){ showToast('Could not read that file'); }
     });
   }
 
