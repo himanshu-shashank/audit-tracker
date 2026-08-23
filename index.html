@@ -187,7 +187,7 @@ function svgIcon(name, cls, extraAttrs){
   return `<svg class="icon${cls?(' '+cls):''}"${extraAttrs?(' '+extraAttrs):''} aria-hidden="true"><use href="#i-${name}"></use></svg>`;
 }
 
-let STATE = { view:'home', auditId:null, audits:[], loaded:false, searchQuery:'', filterStatus:'all' };
+let STATE = { view:'home', auditId:null, audits:[], tombstones:{}, loaded:false, searchQuery:'', filterStatus:'all' };
 
 window.addEventListener('unhandledrejection', (e)=>{
   console.error('Unhandled:', e.reason);
@@ -261,19 +261,70 @@ function showToast(msg){
   window._toastTimer = setTimeout(()=>t.classList.remove('show'), 1800);
 }
 
-const DB_NAME = 'audit-tracker-db', STORE_NAME = 'audits';
+const DB_NAME = 'audit-tracker-db', STORE_NAME = 'audits', TOMBSTONE_STORE = 'tombstones';
 let dbPromise = null;
 function openDB(){
   if(dbPromise) return dbPromise;
   dbPromise = new Promise((resolve,reject)=>{
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = ()=>{ req.result.createObjectStore(STORE_NAME, {keyPath:'id'}); };
+    const req = indexedDB.open(DB_NAME, 2);
+    req.onupgradeneeded = ()=>{
+      const db = req.result;
+      if(!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME, {keyPath:'id'});
+      if(!db.objectStoreNames.contains(TOMBSTONE_STORE)) db.createObjectStore(TOMBSTONE_STORE, {keyPath:'id'});
+    };
     req.onsuccess = ()=>resolve(req.result);
     req.onerror = ()=>reject(req.error);
   });
   return dbPromise;
 }
 function tx(mode){ return openDB().then(db=>db.transaction(STORE_NAME, mode).objectStore(STORE_NAME)); }
+function tombTx(mode){ return openDB().then(db=>db.transaction(TOMBSTONE_STORE, mode).objectStore(TOMBSTONE_STORE)); }
+
+async function loadLocalTombstones(){
+  try{
+    const store = await tombTx('readonly');
+    const rows = await new Promise((resolve,reject)=>{
+      const req = store.getAll();
+      req.onsuccess = ()=>resolve(req.result||[]);
+      req.onerror = ()=>reject(req.error);
+    });
+    const map = {};
+    rows.forEach(r=>{ map[r.id] = r.deletedAt; });
+    return map;
+  }catch(e){ console.error(e); return {}; }
+}
+
+async function replaceLocalTombstones(map){
+  try{
+    const db = await openDB();
+    await new Promise((resolve,reject)=>{
+      const t = db.transaction(TOMBSTONE_STORE, 'readwrite');
+      const store = t.objectStore(TOMBSTONE_STORE);
+      store.clear();
+      Object.keys(map).forEach(id=>store.put({id, deletedAt: map[id]}));
+      t.oncomplete = resolve; t.onerror = ()=>reject(t.error);
+    });
+  }catch(e){ console.error(e); }
+}
+
+// Union of two tombstone sets, keeping the later deletedAt per id.
+function mergeTombstones(a, b){
+  const merged = Object.assign({}, a);
+  Object.keys(b).forEach(id=>{
+    if(!(id in merged) || b[id] > merged[id]) merged[id] = b[id];
+  });
+  return merged;
+}
+
+// An audit survives a tombstone only if it was edited AFTER the deletion —
+// i.e. a genuinely newer change un-deletes it; anything older stays gone.
+function applyTombstones(audits, tombstones){
+  return audits.filter(a=>{
+    const deletedAt = tombstones[a.id];
+    if(deletedAt===undefined) return true;
+    return (a.updatedAt||0) > deletedAt;
+  });
+}
 
 // --- Claude account sync ------------------------------------------------
 async function loadAllAudits(){
@@ -284,8 +335,10 @@ async function loadAllAudits(){
       req.onsuccess = ()=>resolve(req.result||[]);
       req.onerror = ()=>reject(req.error);
     });
-    audits.sort((a,b)=> (b.auditDate||'').localeCompare(a.auditDate||''));
-    STATE.audits = audits;
+    STATE.tombstones = await loadLocalTombstones();
+    const cleaned = applyTombstones(audits, STATE.tombstones);
+    cleaned.sort((a,b)=> (b.auditDate||'').localeCompare(a.auditDate||''));
+    STATE.audits = cleaned;
   }catch(e){ console.error(e); showToast("Couldn't load saved audits"); STATE.audits = []; }
   STATE.loaded = true;
 }
@@ -306,10 +359,19 @@ async function saveAudit(audit){
 
 async function deleteAudit(id){
   STATE.audits = STATE.audits.filter(a=>a.id!==id);
+  const deletedAt = Date.now();
+  STATE.tombstones[id] = deletedAt;
   try{
     const store = await tx('readwrite');
     await new Promise((resolve,reject)=>{
       const req = store.delete(id);
+      req.onsuccess = resolve; req.onerror = ()=>reject(req.error);
+    });
+  }catch(e){ console.error(e); }
+  try{
+    const tstore = await tombTx('readwrite');
+    await new Promise((resolve,reject)=>{
+      const req = tstore.put({id, deletedAt});
       req.onsuccess = resolve; req.onerror = ()=>reject(req.error);
     });
   }catch(e){ console.error(e); }
@@ -411,7 +473,7 @@ async function findOrCreateDriveFile(){
   const boundary = 'audittrackerboundary';
   const body =
     `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({name:DRIVE_FILE_NAME, mimeType:'application/json'})}\r\n` +
-    `--${boundary}\r\nContent-Type: application/json\r\n\r\n[]\r\n--${boundary}--`;
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify({audits:[], deletedIds:{}})}\r\n--${boundary}--`;
   const createRes = await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
     method: 'POST',
     headers: {'Content-Type': `multipart/related; boundary=${boundary}`},
@@ -430,11 +492,22 @@ async function pullFromDrive(){
     const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
     if(!res.ok) throw new Error('could not read the Drive file (status '+res.status+')');
     const text = await res.text();
-    let remote = [];
-    try{ const parsed = JSON.parse(text || '[]'); if(Array.isArray(parsed)) remote = parsed; }catch(e){}
-    const merged = mergeAudits(STATE.audits, remote);
+    let remoteAudits = [], remoteTombstones = {};
+    try{
+      const parsed = JSON.parse(text || '{}');
+      if(Array.isArray(parsed)){
+        remoteAudits = parsed; // legacy file from before deletion-tracking existed
+      } else if(parsed && typeof parsed==='object'){
+        if(Array.isArray(parsed.audits)) remoteAudits = parsed.audits;
+        if(parsed.deletedIds && typeof parsed.deletedIds==='object') remoteTombstones = parsed.deletedIds;
+      }
+    }catch(e){}
+    STATE.tombstones = mergeTombstones(STATE.tombstones, remoteTombstones);
+    let merged = mergeAudits(STATE.audits, remoteAudits);
+    merged = applyTombstones(merged, STATE.tombstones);
     STATE.audits = merged;
     await replaceLocalAudits(merged);
+    await replaceLocalTombstones(STATE.tombstones);
   }catch(e){
     console.error(e);
     showToast('Drive sync failed — ' + (e && e.message ? e.message : String(e)));
@@ -455,7 +528,7 @@ async function pushToDrive(){
     const res = await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
       method: 'PATCH',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(STATE.audits)
+      body: JSON.stringify({audits: STATE.audits, deletedIds: STATE.tombstones})
     });
     if(!res.ok) throw new Error('could not save to Drive (status '+res.status+')');
   }catch(e){
