@@ -448,9 +448,7 @@ async function initGoogleSignIn(){
       DRIVE.accessToken = resp.access_token;
       DRIVE.connected = true;
       localStorage.setItem(DRIVE_AUTOCONNECT_KEY, '1');
-      showToast('Connected to Google Drive — syncing…');
-      await pullFromDrive();
-      showToast('Synced with Google Drive');
+      if(!wasSilent) showToast('Connected to Google Drive');
       render();
     }
   });
@@ -507,7 +505,7 @@ async function findOrCreateDriveFile(){
 }
 
 async function pullFromDrive(){
-  if(!DRIVE.accessToken) return;
+  if(!DRIVE.accessToken) return false;
   try{
     const fileId = await findOrCreateDriveFile();
     const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
@@ -529,9 +527,11 @@ async function pullFromDrive(){
     STATE.audits = merged;
     await replaceLocalAudits(merged);
     await replaceLocalTombstones(STATE.tombstones);
+    return true;
   }catch(e){
     console.error(e);
-    showToast('Drive sync failed — ' + (e && e.message ? e.message : String(e)));
+    showToast('Pull failed — ' + (e && e.message ? e.message : String(e)));
+    return false;
   }
 }
 
@@ -543,7 +543,7 @@ function schedulePush(){
 }
 
 async function pushToDrive(){
-  if(!DRIVE.accessToken) return;
+  if(!DRIVE.accessToken) return false;
   try{
     const fileId = await findOrCreateDriveFile();
     const res = await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
@@ -552,9 +552,11 @@ async function pushToDrive(){
       body: JSON.stringify({audits: STATE.audits, deletedIds: STATE.tombstones})
     });
     if(!res.ok) throw new Error('could not save to Drive (status '+res.status+')');
+    return true;
   }catch(e){
     console.error(e);
-    showToast('Drive sync failed — ' + (e && e.message ? e.message : String(e)));
+    showToast('Push failed — ' + (e && e.message ? e.message : String(e)));
+    return false;
   }
 }
 // -----------------------------------------------------------------------
@@ -737,12 +739,12 @@ function renderSettings(){
         !driveConfigured()
           ? "Not set up yet — needs a Google sign-in connected first."
           : DRIVE.connected
-            ? "Connected. Changes save to Drive a moment after you make them, and pull in automatically whenever you open the app."
-            : "Sign in once to sync your audits with Drive automatically across every device you're signed into."
+            ? "Push happens automatically a moment after you save or delete anything. Pull only happens when you tap it — use that on a new or different device to bring in what's already in Drive."
+            : "Sign in once, then Push keeps Drive updated automatically as you work. Use Pull when you're on a different device and need to bring its data in."
       }</div>
       <div class="btnrow">
         ${DRIVE.connected
-          ? `<button class="sm" id="drive-sync-now-btn">Sync now</button><button class="sm" id="drive-disconnect-btn">Disconnect</button>`
+          ? `<button class="sm" id="drive-push-btn">${svgIcon('upload')} Push to Drive</button><button class="sm" id="drive-pull-btn">${svgIcon('download')} Pull from Drive</button><button class="sm" id="drive-disconnect-btn">Disconnect</button>`
           : `<button id="drive-connect-btn"${driveConfigured()?'':' disabled'}>${svgIcon('cloud-upload')} Connect Google Drive</button>`}
       </div>
     </div>
@@ -866,9 +868,17 @@ function attachHandlers(){
     if(connectBtn) connectBtn.addEventListener('click', driveSignIn);
     const disconnectBtn = document.getElementById('drive-disconnect-btn');
     if(disconnectBtn) disconnectBtn.addEventListener('click', driveSignOut);
-    const syncNowBtn = document.getElementById('drive-sync-now-btn');
-    if(syncNowBtn) syncNowBtn.addEventListener('click', async ()=>{
-      await pullFromDrive(); await pushToDrive(); showToast('Synced'); render();
+    const pushBtn = document.getElementById('drive-push-btn');
+    if(pushBtn) pushBtn.addEventListener('click', async ()=>{
+      const ok = await pushToDrive();
+      if(ok) showToast('Pushed to Drive');
+      render();
+    });
+    const pullBtn = document.getElementById('drive-pull-btn');
+    if(pullBtn) pullBtn.addEventListener('click', async ()=>{
+      const ok = await pullFromDrive();
+      if(ok) showToast('Pulled from Drive');
+      render();
     });
   }
 
