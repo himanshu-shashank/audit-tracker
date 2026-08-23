@@ -422,6 +422,12 @@ function waitForGis(retries){
   });
 }
 
+// Remembers only that THIS BROWSER previously granted access — never the
+// token itself. On the next load we use it to attempt a silent (no popup)
+// re-auth via Google's own session; if that fails (revoked, signed out of
+// Google, etc.) we just fall back to the normal Connect button.
+const DRIVE_AUTOCONNECT_KEY = 'audit-tracker-drive-autoconnect';
+
 async function initGoogleSignIn(){
   if(!driveConfigured()) return;
   const ready = await waitForGis(25);
@@ -430,15 +436,29 @@ async function initGoogleSignIn(){
     client_id: GOOGLE_CLIENT_ID,
     scope: DRIVE_SCOPE,
     callback: async (resp)=>{
-      if(resp.error){ showToast('Google sign-in failed: '+resp.error); return; }
+      const wasSilent = DRIVE._silentAttempt;
+      DRIVE._silentAttempt = false;
+      if(resp.error){
+        // A silent reconnect failing is normal (signed out of Google, revoked, etc.)
+        // — only surface an error for an explicit user-initiated attempt.
+        if(!wasSilent) showToast('Google sign-in failed: '+resp.error);
+        render();
+        return;
+      }
       DRIVE.accessToken = resp.access_token;
       DRIVE.connected = true;
+      localStorage.setItem(DRIVE_AUTOCONNECT_KEY, '1');
       showToast('Connected to Google Drive — syncing…');
       await pullFromDrive();
       showToast('Synced with Google Drive');
       render();
     }
   });
+  if(localStorage.getItem(DRIVE_AUTOCONNECT_KEY)==='1'){
+    DRIVE._silentAttempt = true;
+    DRIVE.tokenClient.requestAccessToken({prompt:''});
+    setTimeout(()=>{ if(DRIVE._silentAttempt){ DRIVE._silentAttempt = false; render(); } }, 4000);
+  }
 }
 
 function driveSignIn(){
@@ -451,6 +471,7 @@ function driveSignOut(){
     google.accounts.oauth2.revoke(DRIVE.accessToken, ()=>{});
   }
   DRIVE.accessToken = null; DRIVE.connected = false; DRIVE.fileId = null;
+  localStorage.removeItem(DRIVE_AUTOCONNECT_KEY);
   showToast('Disconnected from Google Drive');
   render();
 }
