@@ -449,6 +449,7 @@ async function initGoogleSignIn(){
       DRIVE.connected = true;
       localStorage.setItem(DRIVE_AUTOCONNECT_KEY, '1');
       if(!wasSilent) showToast('Connected to Google Drive');
+      ensureMonthlyArchive(); // best-effort, silent — no toast for a routine background check
       render();
     }
   });
@@ -481,6 +482,58 @@ async function driveFetch(url, options){
   if(res.status===401){ DRIVE.connected = false; throw new Error('Google session expired — sign in again'); }
   return res;
 }
+
+// --- Monthly archive snapshot --------------------------------------------
+// A separate, dated checkpoint file — distinct from the live sync file — so
+// there's something to look back on or recover from. There's no way for a
+// plain static site to run code while closed, so "automatic" here means
+// "checked whenever the app is open and connected," not a real background
+// timer. ensureMonthlyArchive() is cheap to call often: once it's confirmed
+// for the current month it short-circuits on a local flag with no network
+// call, until the calendar month changes.
+const LAST_ARCHIVE_KEY = 'audit-tracker-last-archive-month';
+
+function currentMonthKey(){
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+}
+function archiveFileName(){ return `audit-tracker-archive-${currentMonthKey()}.json`; }
+
+// Returns 'created' | 'exists' | 'skipped' (local flag already confirmed
+// this month, no network call made) | 'no-drive' | 'error'.
+async function ensureMonthlyArchive(force){
+  if(!DRIVE.accessToken) return 'no-drive';
+  const monthKey = currentMonthKey();
+  if(!force && localStorage.getItem(LAST_ARCHIVE_KEY)===monthKey) return 'skipped';
+  try{
+    const name = archiveFileName();
+    const q = encodeURIComponent(`name='${name}' and trashed=false`);
+    const res = await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name)`);
+    if(!res.ok) throw new Error('could not check for an existing archive (status '+res.status+')');
+    const data = await res.json();
+    let result = 'exists';
+    if(!data.files || !data.files.length){
+      const boundary = 'audittrackerarchiveboundary';
+      const payload = JSON.stringify({audits: STATE.audits, deletedIds: STATE.tombstones, archivedAt: new Date().toISOString()});
+      const body =
+        `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({name, mimeType:'application/json'})}\r\n` +
+        `--${boundary}\r\nContent-Type: application/json\r\n\r\n${payload}\r\n--${boundary}--`;
+      const createRes = await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+        method: 'POST',
+        headers: {'Content-Type': `multipart/related; boundary=${boundary}`},
+        body
+      });
+      if(!createRes.ok) throw new Error('could not save the archive (status '+createRes.status+')');
+      result = 'created';
+    }
+    localStorage.setItem(LAST_ARCHIVE_KEY, monthKey);
+    return result;
+  }catch(e){
+    console.error(e);
+    return 'error';
+  }
+}
+// -----------------------------------------------------------------------
 
 async function findOrCreateDriveFile(){
   if(DRIVE.fileId) return DRIVE.fileId;
@@ -552,6 +605,7 @@ async function pushToDrive(){
       body: JSON.stringify({audits: STATE.audits, deletedIds: STATE.tombstones})
     });
     if(!res.ok) throw new Error('could not save to Drive (status '+res.status+')');
+    ensureMonthlyArchive(); // best-effort, silent
     return true;
   }catch(e){
     console.error(e);
@@ -748,6 +802,14 @@ function renderSettings(){
           : `<button id="drive-connect-btn"${driveConfigured()?'':' disabled'}>${svgIcon('cloud-upload')} Connect Google Drive</button>`}
       </div>
     </div>
+    ${driveConfigured() ? `<div class="card">
+      <div class="company" style="font-size:16px;">Monthly archive</div>
+      <div class="meta" style="margin-top:6px;line-height:1.5;">Whenever the app is open and connected, it checks for a dated snapshot for the current month and saves one if missing — a separate checkpoint from the live sync file, e.g. ${archiveFileName()}.</div>
+      <div class="meta" style="margin-top:8px;">${localStorage.getItem(LAST_ARCHIVE_KEY)===currentMonthKey() ? `✓ confirmed for ${currentMonthKey()}` : 'Not checked yet this month'}</div>
+      <div class="btnrow">
+        <button class="sm" id="drive-archive-now-btn">Check / archive now</button>
+      </div>
+    </div>` : ''}
   </div>`;
 }
 
@@ -878,6 +940,15 @@ function attachHandlers(){
     if(pullBtn) pullBtn.addEventListener('click', async ()=>{
       const ok = await pullFromDrive();
       if(ok) showToast('Pulled from Drive');
+      render();
+    });
+    const archiveBtn = document.getElementById('drive-archive-now-btn');
+    if(archiveBtn) archiveBtn.addEventListener('click', async ()=>{
+      const result = await ensureMonthlyArchive(true);
+      if(result==='created') showToast('Monthly archive saved to Drive');
+      else if(result==='exists') showToast("This month's archive already exists in Drive");
+      else if(result==='no-drive') showToast('Connect Google Drive first');
+      else showToast('Could not check the archive — try again');
       render();
     });
   }
