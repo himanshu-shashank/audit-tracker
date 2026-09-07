@@ -74,7 +74,8 @@
   .reqline{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:14px;}
   .reqline:last-child{border-bottom:none;}
   .reqline .amt{font-family:var(--mono);}
-  .reqline .amt-input{font-family:var(--mono);width:100px;text-align:right;border:none;padding:0;background:transparent;font-size:14px;}
+  .reqline .amt-edit{font-family:var(--mono);display:inline-flex;align-items:center;gap:1px;color:var(--ink);}
+  .reqline .amt-input{font-family:var(--mono);width:7ch;text-align:left;border:none;padding:0;background:transparent;font-size:14px;color:var(--ink);}
   .navbar{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--surface);border-top:1px solid var(--border);display:flex;z-index:10;}
   .navbar button{flex:1;border:none;border-radius:0;background:transparent;padding:10px 4px 8px;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10px;font-weight:600;color:var(--ink-faint);text-transform:uppercase;letter-spacing:0.04em;}
   .navbar button.active{color:var(--accent-ink);}
@@ -254,6 +255,10 @@ function todayISO(){ return new Date().toISOString().slice(0,10); }
 function fmtDate(iso){ if(!iso) return '—'; const d=new Date(iso+'T00:00:00'); return d.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); }
 function daysBetween(a,b){ return Math.round((new Date(b+'T00:00:00') - new Date(a+'T00:00:00')) / 86400000); }
 function money(n){ n = Number(n)||0; return '₹' + n.toLocaleString('en-IN'); }
+function reimbursableTotal(a){
+  const amt = (a.reimbursementAmount!=null && a.reimbursementAmount!=='') ? a.reimbursementAmount : a.fees;
+  return (Number(amt)||0) + (Number(a.travelAllowance)||0);
+}
 
 function showToast(msg){
   const t = document.getElementById('toast');
@@ -717,6 +722,7 @@ function renderHome(){
           </div>
           <span class="stamp ${ds}">${svgIcon(ICONS[ds])} ${STATUS_LABEL[ds]}</span>
         </div>
+        <div class="meta">Total reimbursable: ${money(reimbursableTotal(a))}</div>
         ${dueLine}
       </div>`;
     }).join('');
@@ -772,6 +778,7 @@ function renderReminders(){
           <span class="stamp ${overdue?'overdue':'submitted'}">${overdue?'Overdue':'Pending'}</span>
         </div>
         <div class="meta">Submitted ${fmtDate(a.submittedDate)} · Due ${fmtDate(a.reimbursementDueDate)}</div>
+        <div class="meta">Total reimbursable: ${money(reimbursableTotal(a))}</div>
         <div class="due-line ${cls}">${overdue ? Math.abs(d)+' days overdue' : d+' days remaining'}</div>
         ${a.followUps && a.followUps.length ? `<div class="faint" style="font-size:12px;margin-top:6px;">Last follow-up: ${fmtDate(a.followUps[a.followUps.length-1].date)}</div>` : ''}
         <div class="btnrow">
@@ -832,7 +839,7 @@ function renderDetail(){
     <div class="section-label">Fees & travel</div>
     <div class="card">
       <div class="reqline"><span>Fees / Reimbursement limit</span><span class="amt">${money(a.fees)}</span></div>
-      <div class="reqline"><span>Reimbursement amount</span><input type="number" class="amt-input" id="f-reimb-amount" value="${esc(a.reimbursementAmount!=null && a.reimbursementAmount!=='' ? a.reimbursementAmount : a.fees)}" placeholder="₹"></div>
+      <div class="reqline"><span>Reimbursement amount</span><span class="amt-edit">₹<input type="number" class="amt-input" id="f-reimb-amount" value="${esc(a.reimbursementAmount!=null && a.reimbursementAmount!=='' ? a.reimbursementAmount : a.fees)}" placeholder="0"></span></div>
       <div class="reqline"><span>Travel allowance</span><span class="amt">${money(a.travelAllowance)}</span></div>
     </div>
 
