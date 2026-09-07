@@ -882,7 +882,7 @@ function renderStaffSection(a){
   const entries = a.staffInvolved || [];
   const rows = entries.map((s,i)=>`<div class="staff-entry"${i>0?' style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);"':''}>
     <div class="row" style="gap:8px;align-items:center;">
-      <select class="staff-role" data-staff-idx="${i}" style="flex:0 0 38%;padding-left:8px;padding-right:6px;">
+      <select class="staff-role" data-staff-idx="${i}" style="flex:0 0 auto;width:15ch;padding-left:10px;padding-right:8px;">
         ${STAFF_ROLES.map(r=>`<option ${s.role===r?'selected':''}>${r}</option>`).join('')}
       </select>
       <input type="text" class="staff-name" data-staff-idx="${i}" placeholder="${s.role==='Other'?'e.g. Valet, Ramesh':'Name'}" value="${esc(s.name || (s.role==='Other'?s.customRole:'') || '')}" style="flex:1;min-width:0;">
