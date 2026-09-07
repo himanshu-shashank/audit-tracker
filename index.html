@@ -625,12 +625,14 @@ const AUDIT_COMPANIES = ['Shaw Hotels','Onion Insights','HS Brands','Bare Intern
 const REIMBURSEMENT_WINDOW_BY_COMPANY = {
   'Shaw Hotels':90, 'Onion Insights':60, 'HS Brands':60, 'Bare International':30, 'Le capri':60, 'Bridge Loyalty':30, 'Total Solutions Group':30
 };
+const STAFF_ROLES = ['Host/Hostess','Order taker','Order server','Manager','Other'];
 
 function newAuditObj(){
   return {
     id: uid(), auditCompany: AUDIT_COMPANIES[0], company:'', category:'Restaurant', location:'', auditDate: todayISO(),
     fees:'', travelAllowance:'', reimbursementAmount:'',
     report: { staff:0, cleanliness:0, quality:0, restroom:0, waitTime:0, notes:'' },
+    staffInvolved: [],
     status:'scheduled',
     reimbursementWindowDays: REIMBURSEMENT_WINDOW_BY_COMPANY[AUDIT_COMPANIES[0]], submittedDate:null, reimbursedDate:null,
     followUps: [], createdAt: Date.now()
@@ -843,6 +845,8 @@ function renderDetail(){
       <div class="reqline"><span>Travel allowance</span><span class="amt">${money(a.travelAllowance)}</span></div>
     </div>
 
+    ${a.category==='Restaurant' ? renderStaffSection(a) : ''}
+
     <div class="section-label">Audit report</div>
     <div class="card">
       ${ratingRow('staff','Staff behaviour', a.report.staff)}
@@ -871,6 +875,25 @@ function reimbursementCard(a){
     <div class="meta">Due by ${fmtDate(a.reimbursementDueDate)} (${a.reimbursementWindowDays}d window)</div>
     ${a.status==='reimbursed' ? `<div class="due-line green">Reimbursed ${fmtDate(a.reimbursedDate)}</div>` : ''}
     ${a.followUps && a.followUps.length ? `<div class="divider"></div><div style="font-size:12px;font-weight:600;color:var(--ink-soft);">Follow-up log</div>${a.followUps.map(f=>`<div class="followup">${fmtDate(f.date)} — ${esc(f.note)}</div>`).join('')}` : ''}
+  </div>`;
+}
+
+function renderStaffSection(a){
+  const entries = a.staffInvolved || [];
+  const rows = entries.map((s,i)=>`<div class="staff-entry"${i>0?' style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);"':''}>
+    <div class="row" style="gap:8px;align-items:center;">
+      <select class="staff-role" data-staff-idx="${i}" style="flex:1;">
+        ${STAFF_ROLES.map(r=>`<option ${s.role===r?'selected':''}>${r}</option>`).join('')}
+      </select>
+      <button type="button" class="ghost sm" data-staff-remove="${i}" aria-label="Remove">${svgIcon('x')}</button>
+    </div>
+    ${s.role==='Other' ? `<input type="text" class="staff-custom" data-staff-idx="${i}" placeholder="Specify role" value="${esc(s.customRole)}" style="margin-top:8px;">` : ''}
+    <input type="text" class="staff-name" data-staff-idx="${i}" placeholder="Name" value="${esc(s.name)}" style="margin-top:8px;">
+  </div>`).join('');
+  return `<div class="section-label">Staff involved</div>
+  <div class="card">
+    ${rows}
+    <button class="sm" id="add-staff-entry" style="${entries.length?'margin-top:14px;':''}">${svgIcon('plus')} Add person</button>
   </div>`;
 }
 
@@ -973,6 +996,36 @@ function attachHandlers(){
     if(notesEl) notesEl.addEventListener('blur', async ()=>{ a.report.notes = notesEl.value; await saveAudit(a); });
     const reimbAmountEl = document.getElementById('f-reimb-amount');
     if(reimbAmountEl) reimbAmountEl.addEventListener('input', async ()=>{ a.reimbursementAmount = reimbAmountEl.value; await saveAudit(a); });
+
+    if(a.category==='Restaurant'){
+      if(!a.staffInvolved) a.staffInvolved = [];
+      document.querySelectorAll('.staff-role').forEach(el=>el.addEventListener('change', async ()=>{
+        const i = Number(el.dataset.staffIdx);
+        a.staffInvolved[i].role = el.value;
+        if(el.value!=='Other') a.staffInvolved[i].customRole = '';
+        await saveAudit(a); render();
+      }));
+      document.querySelectorAll('.staff-custom').forEach(el=>el.addEventListener('blur', async ()=>{
+        const i = Number(el.dataset.staffIdx);
+        a.staffInvolved[i].customRole = el.value;
+        await saveAudit(a);
+      }));
+      document.querySelectorAll('.staff-name').forEach(el=>el.addEventListener('blur', async ()=>{
+        const i = Number(el.dataset.staffIdx);
+        a.staffInvolved[i].name = el.value;
+        await saveAudit(a);
+      }));
+      document.querySelectorAll('[data-staff-remove]').forEach(el=>el.addEventListener('click', async ()=>{
+        const i = Number(el.dataset.staffRemove);
+        a.staffInvolved.splice(i,1);
+        await saveAudit(a); render();
+      }));
+      const addStaffBtn = document.getElementById('add-staff-entry');
+      if(addStaffBtn) addStaffBtn.addEventListener('click', async ()=>{
+        a.staffInvolved.push({role: STAFF_ROLES[0], customRole:'', name:''});
+        await saveAudit(a); render();
+      });
+    }
 
     document.querySelectorAll('[data-setstatus]').forEach(el=>el.addEventListener('click', async ()=>{
       const s = el.dataset.setstatus;
