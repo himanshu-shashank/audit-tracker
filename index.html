@@ -880,15 +880,14 @@ function reimbursementCard(a){
 
 function renderStaffSection(a){
   const entries = a.staffInvolved || [];
-  const rows = entries.map((s,i)=>`<div class="staff-entry"${i>0?' style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);"':''}>
+  const rows = entries.map((s,i)=>`<div class="staff-entry"${i>0?' style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);"':''}>
     <div class="row" style="gap:8px;align-items:center;">
-      <select class="staff-role" data-staff-idx="${i}" style="flex:1;">
+      <select class="staff-role" data-staff-idx="${i}" style="flex:0 0 38%;padding-left:8px;padding-right:6px;">
         ${STAFF_ROLES.map(r=>`<option ${s.role===r?'selected':''}>${r}</option>`).join('')}
       </select>
+      <input type="text" class="staff-name" data-staff-idx="${i}" placeholder="${s.role==='Other'?'e.g. Valet, Ramesh':'Name'}" value="${esc(s.name || (s.role==='Other'?s.customRole:'') || '')}" style="flex:1;min-width:0;">
       <button type="button" class="ghost sm" data-staff-remove="${i}" aria-label="Remove">${svgIcon('x')}</button>
     </div>
-    ${s.role==='Other' ? `<input type="text" class="staff-custom" data-staff-idx="${i}" placeholder="Specify role" value="${esc(s.customRole)}" style="margin-top:8px;">` : ''}
-    <input type="text" class="staff-name" data-staff-idx="${i}" placeholder="Name" value="${esc(s.name)}" style="margin-top:8px;">
   </div>`).join('');
   return `<div class="section-label">Staff involved</div>
   <div class="card">
@@ -1004,11 +1003,6 @@ function attachHandlers(){
         a.staffInvolved[i].role = el.value;
         if(el.value!=='Other') a.staffInvolved[i].customRole = '';
         await saveAudit(a); render();
-      }));
-      document.querySelectorAll('.staff-custom').forEach(el=>el.addEventListener('blur', async ()=>{
-        const i = Number(el.dataset.staffIdx);
-        a.staffInvolved[i].customRole = el.value;
-        await saveAudit(a);
       }));
       document.querySelectorAll('.staff-name').forEach(el=>el.addEventListener('blur', async ()=>{
         const i = Number(el.dataset.staffIdx);
