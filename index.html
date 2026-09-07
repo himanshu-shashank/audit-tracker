@@ -89,6 +89,8 @@
   .chip-row::-webkit-scrollbar{display:none;}
   .chip{flex:none;font-family:var(--mono);font-size:12px;font-weight:600;padding:6px 13px;border-radius:20px;border:1px solid var(--border-strong);background:var(--surface);color:var(--ink-soft);white-space:nowrap;}
   .chip.active{background:var(--ink);color:#fff;border-color:var(--ink);}
+  .chip.time{display:inline-flex;align-items:center;gap:6px;flex:1;justify-content:space-between;}
+  .chip .chip-x{background:none;border:none;padding:0;margin:0;color:inherit;font:inherit;cursor:pointer;display:inline-flex;}
   .modal-overlay{position:fixed;inset:0;background:rgba(15,18,14,0.5);display:none;align-items:center;justify-content:center;z-index:100;padding:24px;}
   .modal-overlay.show{display:flex;}
   .modal-card{background:var(--surface);border-radius:12px;padding:20px;max-width:340px;width:100%;}
@@ -258,6 +260,13 @@ function money(n){ n = Number(n)||0; return '₹' + n.toLocaleString('en-IN'); }
 function reimbursableTotal(a){
   const amt = (a.reimbursementAmount!=null && a.reimbursementAmount!=='') ? a.reimbursementAmount : a.fees;
   return (Number(amt)||0) + (Number(a.travelAllowance)||0);
+}
+function fmtTime(ms){ return new Date(ms).toLocaleTimeString('en-IN',{hour:'numeric',minute:'2-digit'}); }
+function fmtDuration(ms){
+  if(ms==null || ms<0) return '—';
+  const totalSec = Math.round(ms/1000);
+  const m = Math.floor(totalSec/60), s = totalSec%60;
+  return m>0 ? `${m}m ${s}s` : `${s}s`;
 }
 
 function showToast(msg){
@@ -626,6 +635,7 @@ const REIMBURSEMENT_WINDOW_BY_COMPANY = {
   'Shaw Hotels':90, 'Onion Insights':60, 'HS Brands':60, 'Bare International':30, 'Le capri':60, 'Bridge Loyalty':30, 'Total Solutions Group':30
 };
 const STAFF_ROLES = ['Host/Hostess','Order taker','Order server','Manager','Other'];
+const ITEM_CATEGORIES = ['Beverage','Starter','Main course','Dessert','Other'];
 
 function newAuditObj(){
   return {
@@ -633,6 +643,7 @@ function newAuditObj(){
     fees:'', travelAllowance:'', reimbursementAmount:'',
     report: { staff:0, cleanliness:0, quality:0, restroom:0, waitTime:0, notes:'' },
     staffInvolved: [],
+    itemTimings: [],
     status:'scheduled',
     reimbursementWindowDays: REIMBURSEMENT_WINDOW_BY_COMPANY[AUDIT_COMPANIES[0]], submittedDate:null, reimbursedDate:null,
     followUps: [], createdAt: Date.now()
@@ -846,6 +857,7 @@ function renderDetail(){
     </div>
 
     ${a.category==='Restaurant' ? renderStaffSection(a) : ''}
+    ${a.category==='Restaurant' ? renderItemSection(a) : ''}
 
     <div class="section-label">Audit report</div>
     <div class="card">
@@ -893,6 +905,38 @@ function renderStaffSection(a){
   <div class="card">
     ${rows}
     <button class="sm" id="add-staff-entry" style="${entries.length?'margin-top:14px;':''}">${svgIcon('plus')} Add person</button>
+  </div>`;
+}
+
+function renderItemSection(a){
+  const items = a.itemTimings || [];
+  const rows = items.map((it,i)=>{
+    const orderedLabel = it.orderedAt ? fmtTime(it.orderedAt) : null;
+    const receivedLabel = it.receivedAt ? fmtTime(it.receivedAt) : null;
+    const duration = (it.orderedAt && it.receivedAt) ? fmtDuration(it.receivedAt - it.orderedAt) : null;
+    return `<div class="item-entry"${i>0?' style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);"':''}>
+      <div class="row" style="gap:8px;align-items:center;">
+        <select class="item-category" data-item-idx="${i}" style="flex:0 0 auto;width:13ch;">
+          ${ITEM_CATEGORIES.map(c=>`<option ${it.category===c?'selected':''}>${c}</option>`).join('')}
+        </select>
+        ${it.category==='Other' ? `<input type="text" class="item-custom" data-item-idx="${i}" placeholder="Specify item" value="${esc(it.customCategory)}" style="flex:1;">` : `<div style="flex:1;"></div>`}
+        <button type="button" class="ghost sm" data-item-remove="${i}" aria-label="Remove">${svgIcon('x')}</button>
+      </div>
+      <div class="row" style="gap:8px;margin-top:8px;">
+        ${orderedLabel
+          ? `<span class="chip time">Ordered ${orderedLabel}<button type="button" class="chip-x" data-item-idx="${i}" data-item-reset="ordered" aria-label="Reset ordered time">${svgIcon('x')}</button></span>`
+          : `<button type="button" class="sm" style="flex:1;" data-item-idx="${i}" data-item-mark="ordered">Mark ordered</button>`}
+        ${receivedLabel
+          ? `<span class="chip time">Received ${receivedLabel}<button type="button" class="chip-x" data-item-idx="${i}" data-item-reset="received" aria-label="Reset received time">${svgIcon('x')}</button></span>`
+          : `<button type="button" class="sm" style="flex:1;" data-item-idx="${i}" data-item-mark="received">Mark received</button>`}
+      </div>
+      ${duration ? `<div class="meta" style="margin-top:6px;">Total time: ${duration}</div>` : ''}
+    </div>`;
+  }).join('');
+  return `<div class="section-label">Order timing</div>
+  <div class="card">
+    ${rows}
+    <button class="sm" id="add-item-entry" style="${items.length?'margin-top:14px;':''}">${svgIcon('plus')} Add item</button>
   </div>`;
 }
 
@@ -1017,6 +1061,41 @@ function attachHandlers(){
       const addStaffBtn = document.getElementById('add-staff-entry');
       if(addStaffBtn) addStaffBtn.addEventListener('click', async ()=>{
         a.staffInvolved.push({role: STAFF_ROLES[0], customRole:'', name:''});
+        await saveAudit(a); render();
+      });
+
+      if(!a.itemTimings) a.itemTimings = [];
+      document.querySelectorAll('.item-category').forEach(el=>el.addEventListener('change', async ()=>{
+        const i = Number(el.dataset.itemIdx);
+        a.itemTimings[i].category = el.value;
+        if(el.value!=='Other') a.itemTimings[i].customCategory = '';
+        await saveAudit(a); render();
+      }));
+      document.querySelectorAll('.item-custom').forEach(el=>el.addEventListener('blur', async ()=>{
+        const i = Number(el.dataset.itemIdx);
+        a.itemTimings[i].customCategory = el.value;
+        await saveAudit(a);
+      }));
+      document.querySelectorAll('[data-item-mark]').forEach(el=>el.addEventListener('click', async ()=>{
+        const i = Number(el.dataset.itemIdx);
+        const field = el.dataset.itemMark==='ordered' ? 'orderedAt' : 'receivedAt';
+        a.itemTimings[i][field] = Date.now();
+        await saveAudit(a); render();
+      }));
+      document.querySelectorAll('[data-item-reset]').forEach(el=>el.addEventListener('click', async ()=>{
+        const i = Number(el.dataset.itemIdx);
+        const field = el.dataset.itemReset==='ordered' ? 'orderedAt' : 'receivedAt';
+        a.itemTimings[i][field] = null;
+        await saveAudit(a); render();
+      }));
+      document.querySelectorAll('[data-item-remove]').forEach(el=>el.addEventListener('click', async ()=>{
+        const i = Number(el.dataset.itemRemove);
+        a.itemTimings.splice(i,1);
+        await saveAudit(a); render();
+      }));
+      const addItemBtn = document.getElementById('add-item-entry');
+      if(addItemBtn) addItemBtn.addEventListener('click', async ()=>{
+        a.itemTimings.push({category: ITEM_CATEGORIES[0], customCategory:'', orderedAt:null, receivedAt:null});
         await saveAudit(a); render();
       });
     }
