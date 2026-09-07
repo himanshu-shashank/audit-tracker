@@ -71,9 +71,10 @@
   button.block{width:100%;}
   button.sm{padding:6px 12px;font-size:13px;}
   .btnrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
-  .reqline{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:14px;}
+  .reqline{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:14px;}
   .reqline:last-child{border-bottom:none;}
   .reqline .amt{font-family:var(--mono);}
+  .reqline .amt-input{font-family:var(--mono);width:100px;text-align:right;border:none;padding:0;background:transparent;font-size:14px;}
   .navbar{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--surface);border-top:1px solid var(--border);display:flex;z-index:10;}
   .navbar button{flex:1;border:none;border-radius:0;background:transparent;padding:10px 4px 8px;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10px;font-weight:600;color:var(--ink-faint);text-transform:uppercase;letter-spacing:0.04em;}
   .navbar button.active{color:var(--accent-ink);}
@@ -615,15 +616,15 @@ async function pushToDrive(){
 }
 // -----------------------------------------------------------------------
 
-const AUDIT_COMPANIES = ['Shaw Hotels','Onion Insights','HS Brands','Bare International','Le capri','Bridge Loyalty'];
+const AUDIT_COMPANIES = ['Shaw Hotels','Onion Insights','HS Brands','Bare International','Le capri','Bridge Loyalty','Total Solutions Group'];
 const REIMBURSEMENT_WINDOW_BY_COMPANY = {
-  'Shaw Hotels':90, 'Onion Insights':60, 'HS Brands':60, 'Bare International':30, 'Le capri':60, 'Bridge Loyalty':30
+  'Shaw Hotels':90, 'Onion Insights':60, 'HS Brands':60, 'Bare International':30, 'Le capri':60, 'Bridge Loyalty':30, 'Total Solutions Group':30
 };
 
 function newAuditObj(){
   return {
     id: uid(), auditCompany: AUDIT_COMPANIES[0], company:'', category:'Restaurant', location:'', auditDate: todayISO(),
-    fees:'', travelAllowance:'',
+    fees:'', travelAllowance:'', reimbursementAmount:'',
     report: { staff:0, cleanliness:0, quality:0, restroom:0, waitTime:0, notes:'' },
     status:'scheduled',
     reimbursementWindowDays: REIMBURSEMENT_WINDOW_BY_COMPANY[AUDIT_COMPANIES[0]], submittedDate:null, reimbursedDate:null,
@@ -742,7 +743,7 @@ function renderNew(){
     <input type="text" id="f-location" value="${esc(a.location)}" placeholder="Area, city">
     <label class="field-label">Audit date</label>
     <input type="date" id="f-date" value="${a.auditDate}">
-    <label class="field-label">Fees / Reimbursement</label>
+    <label class="field-label">Fees / Reimbursement limit</label>
     <input type="number" class="amount-input" id="f-fees" value="${esc(a.fees)}" placeholder="₹">
     <label class="field-label">Travel allowance</label>
     <input type="number" class="amount-input" id="f-travel" value="${esc(a.travelAllowance)}" placeholder="₹">
@@ -830,7 +831,8 @@ function renderDetail(){
 
     <div class="section-label">Fees & travel</div>
     <div class="card">
-      <div class="reqline"><span>Fees / Reimbursement</span><span class="amt">${money(a.fees)}</span></div>
+      <div class="reqline"><span>Fees / Reimbursement limit</span><span class="amt">${money(a.fees)}</span></div>
+      <div class="reqline"><span>Reimbursement amount</span><input type="number" class="amt-input" id="f-reimb-amount" value="${esc(a.reimbursementAmount!=null && a.reimbursementAmount!=='' ? a.reimbursementAmount : a.fees)}" placeholder="₹"></div>
       <div class="reqline"><span>Travel allowance</span><span class="amt">${money(a.travelAllowance)}</span></div>
     </div>
 
@@ -962,6 +964,8 @@ function attachHandlers(){
     }));
     const notesEl = document.getElementById('report-notes');
     if(notesEl) notesEl.addEventListener('blur', async ()=>{ a.report.notes = notesEl.value; await saveAudit(a); });
+    const reimbAmountEl = document.getElementById('f-reimb-amount');
+    if(reimbAmountEl) reimbAmountEl.addEventListener('input', async ()=>{ a.reimbursementAmount = reimbAmountEl.value; await saveAudit(a); });
 
     document.querySelectorAll('[data-setstatus]').forEach(el=>el.addEventListener('click', async ()=>{
       const s = el.dataset.setstatus;
